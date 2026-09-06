@@ -47,6 +47,15 @@ async function main() {
   }
 
   console.log(`\nDone. Published ${published}/${config.videosPerRun} videos this run.`);
+
+  // A "successful" run that published nothing is a failure — surface it as
+  // a red X in GitHub Actions instead of a misleading green check, so you
+  // actually notice when something's silently going wrong.
+  if (published < config.videosPerRun) {
+    throw new Error(
+      `Only published ${published}/${config.videosPerRun} videos after ${attempts} attempts. See warnings above for why each attempt was rejected or failed.`
+    );
+  }
 }
 
 main().catch((err) => {
