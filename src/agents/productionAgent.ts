@@ -1,5 +1,5 @@
 import path from "path";
-import { mkdtemp, rm } from "fs/promises";
+import { mkdtemp, rm, mkdir } from "fs/promises";
 import { tmpdir } from "os";
 import { synthesizeSpeech } from "../services/tts.js";
 import { fetchStockImage } from "../services/visuals.js";
@@ -38,6 +38,7 @@ export async function produceVideo(script: VideoScript): Promise<ProducedVideo> 
     await concatClips(clipPaths, mainCut, workDir);
 
     const finalPath = path.resolve(`output/${slugify(script.topic)}.mp4`);
+    await mkdir(path.dirname(finalPath), { recursive: true }); // output/ may not exist yet (git doesn't track empty dirs)
     await applyBrandingPass({
       inputPath: mainCut,
       logoPath: LOGO_PATH,
