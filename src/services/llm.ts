@@ -29,7 +29,9 @@ export async function askForJson<T>(systemPrompt: string, userPrompt: string): P
       Authorization: `Bearer ${config.openRouterApiKey}`,
       "Content-Type": "application/json",
       "HTTP-Referer": "https://github.com/", // OpenRouter requires *a* referer; any value works
-      "X-Title": config.channelName,
+      // Header values can only contain plain ASCII — strip symbols like ™ from
+      // the channel name here (this bit Node's http client with ERR_INVALID_CHAR).
+      "X-Title": config.channelName.replace(/[^\x20-\x7E]/g, "").trim(),
     },
     body: JSON.stringify({
       models: FREE_MODEL_CANDIDATES, // OpenRouter tries these in order
