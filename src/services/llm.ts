@@ -3,24 +3,18 @@ import { config } from "../config.js";
 
 /**
  * Free-tier LLM access via OpenRouter (OpenAI-compatible API, no billing
- * required for ":free" models). We pass SEVERAL candidate free models in
- * priority order — OpenRouter automatically falls through to the next one
- * if the first is rate-limited or temporarily down. This matters because
- * free-model availability rotates; hardcoding just one is fragile.
+ * required). We use OpenRouter's own "openrouter/free" router model, which
+ * automatically picks from whichever free models are currently available —
+ * this is the fix for free-model slugs rotating/disappearing over time
+ * (which is exactly what broke this file's previous hardcoded model list).
+ * See https://openrouter.ai/openrouter/free for details.
  *
  * Free tier limits (as of writing): ~20 req/min, 50 req/day per key
  * (rises to 1000/day after a one-time $10 credit top-up, which never
  * expires and is optional). One video costs ~4 LLM calls, so 50/day
  * comfortably covers VIDEOS_PER_RUN=1.
- *
- * If a request fails, check https://openrouter.ai/models?order=top-weekly&max_price=0
- * for the current list of free models and update FREE_MODEL_CANDIDATES below.
  */
-const FREE_MODEL_CANDIDATES = [
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "meta-llama/llama-4-maverick:free",
-  "google/gemini-2.0-flash-exp:free",
-];
+const MODEL = "openrouter/free";
 
 export async function askForJson<T>(systemPrompt: string, userPrompt: string): Promise<T> {
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -34,7 +28,7 @@ export async function askForJson<T>(systemPrompt: string, userPrompt: string): P
       "X-Title": config.channelName.replace(/[^\x20-\x7E]/g, "").trim(),
     },
     body: JSON.stringify({
-      models: FREE_MODEL_CANDIDATES, // OpenRouter tries these in order
+      model: MODEL,
       messages: [
         { role: "system", content: systemPrompt + "\nRespond with ONLY raw JSON. No markdown fences, no prose." },
         { role: "user", content: userPrompt },
