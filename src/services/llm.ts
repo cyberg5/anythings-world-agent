@@ -2,20 +2,21 @@ import fetch from "node-fetch";
 import { config } from "../config.js";
 
 /**
- * Free-tier LLM access via OpenRouter. We use OpenRouter's own
- * "openrouter/free" router model, which picks from whichever free models
- * are currently available. Combined with `response_format: json_object`,
- * the router specifically filters for free models that support structured
- * JSON output — without this, it sometimes picks a reasoning/safety-classifier
- * model that ignores "respond with only JSON" and returns chain-of-thought
- * text or garbled tokens instead.
+ * Free-tier LLM access via OpenRouter. Earlier this used the "openrouter/free"
+ * auto-router, but that occasionally routed to a moderation/safety-only model
+ * that returns a bare "User Safety: safe" instead of a real completion — not
+ * a real chat model at all. Pinning to specific, long-standing free instruct
+ * models avoids that. The `models` array is OpenRouter's built-in fallback:
+ * it tries each in order if one errors or is rate-limited.
  *
- * Because json_object mode requires a top-level JSON *object* (not an array),
- * every response is asked to wrap its real answer in {"result": ...} — this
- * works whether the caller's T is an array or an object, since we just
- * unwrap .result before returning.
+ * If all of these ever stop working, check https://openrouter.ai/models?max_price=0
+ * for current free models and swap the list below.
  */
-const MODEL = "openrouter/free";
+const FREE_MODELS = [
+  "mistralai/mistral-7b-instruct:free",
+  "meta-llama/llama-3.3-8b-instruct:free",
+  "meta-llama/llama-3.2-3b-instruct:free",
+];
 
 function extractJsonObject(text: string): string {
   const start = text.indexOf("{");
@@ -36,7 +37,7 @@ export async function askForJson<T>(systemPrompt: string, userPrompt: string): P
       "X-Title": config.channelName.replace(/[^\x20-\x7E]/g, "").trim(),
     },
     body: JSON.stringify({
-      model: MODEL,
+      models: FREE_MODELS, // OpenRouter tries these in order on error/rate-limit
       response_format: { type: "json_object" },
       messages: [
         {
