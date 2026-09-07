@@ -44,7 +44,7 @@ async function getFreeModels(): Promise<string[]> {
     })
     // Prefer models with a larger context window — usually the more capable, better-maintained ones.
     .sort((a, b) => (b.context_length ?? 0) - (a.context_length ?? 0))
-    .slice(0, 8)
+    .slice(0, 3)
     .map((m) => m.id as string);
 
   if (candidates.length === 0) {
