@@ -2,21 +2,58 @@ import fetch from "node-fetch";
 import { config } from "../config.js";
 
 /**
- * Free-tier LLM access via OpenRouter. Earlier this used the "openrouter/free"
- * auto-router, but that occasionally routed to a moderation/safety-only model
- * that returns a bare "User Safety: safe" instead of a real completion — not
- * a real chat model at all. Pinning to specific, long-standing free instruct
- * models avoids that. The `models` array is OpenRouter's built-in fallback:
- * it tries each in order if one errors or is rate-limited.
+ * Free-tier LLM access via OpenRouter.
  *
- * If all of these ever stop working, check https://openrouter.ai/models?max_price=0
- * for current free models and swap the list below.
+ * We tried two approaches that both broke within days:
+ *   1. OpenRouter's "openrouter/free" auto-router — sometimes silently routed
+ *      to a moderation-only model that returns "User Safety: safe" instead of
+ *      a real completion.
+ *   2. A hardcoded list of specific free model slugs — free-tier availability
+ *      rotates constantly, and slugs that were free one day 404 as
+ *      "unavailable for free" days later.
+ *
+ * The fix: fetch OpenRouter's live model catalog at the start of each run,
+ * filter it ourselves for models that are ACTUALLY free (price is really 0,
+ * not just this week) and that look like real text chat models (excluding
+ * anything with "guard"/"moderation" in the name, which tend to be the
+ * safety-classifier models that caused the "User Safety: safe" bug), then
+ * pass a handful of them as OpenRouter's `models` fallback array. This is
+ * self-healing — it can never go stale, because it never hardcodes a slug.
  */
-const FREE_MODELS = [
-  "mistralai/mistral-7b-instruct:free",
-  "meta-llama/llama-3.3-8b-instruct:free",
-  "meta-llama/llama-3.2-3b-instruct:free",
-];
+let cachedFreeModels: string[] | null = null;
+
+async function getFreeModels(): Promise<string[]> {
+  if (cachedFreeModels) return cachedFreeModels;
+
+  const res = await fetch("https://openrouter.ai/api/v1/models");
+  if (!res.ok) {
+    throw new Error(`Failed to fetch OpenRouter model list: ${res.status}`);
+  }
+  const data = (await res.json()) as any;
+  const models: any[] = data.data ?? [];
+
+  const candidates = models
+    .filter((m) => {
+      const promptPrice = parseFloat(m?.pricing?.prompt ?? "1");
+      const completionPrice = parseFloat(m?.pricing?.completion ?? "1");
+      const isFree = promptPrice === 0 && completionPrice === 0;
+      const outModalities: string[] = m?.architecture?.output_modalities ?? ["text"];
+      const isText = outModalities.includes("text");
+      const looksLikeModeration = /guard|moderation|safety/i.test(m.id ?? "");
+      return isFree && isText && !looksLikeModeration;
+    })
+    // Prefer models with a larger context window — usually the more capable, better-maintained ones.
+    .sort((a, b) => (b.context_length ?? 0) - (a.context_length ?? 0))
+    .slice(0, 8)
+    .map((m) => m.id as string);
+
+  if (candidates.length === 0) {
+    throw new Error("No free text models currently available on OpenRouter.");
+  }
+
+  cachedFreeModels = candidates;
+  return candidates;
+}
 
 function extractJsonObject(text: string): string {
   const start = text.indexOf("{");
@@ -28,6 +65,8 @@ function extractJsonObject(text: string): string {
 }
 
 export async function askForJson<T>(systemPrompt: string, userPrompt: string): Promise<T> {
+  const models = await getFreeModels();
+
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -37,7 +76,7 @@ export async function askForJson<T>(systemPrompt: string, userPrompt: string): P
       "X-Title": config.channelName.replace(/[^\x20-\x7E]/g, "").trim(),
     },
     body: JSON.stringify({
-      models: FREE_MODELS, // OpenRouter tries these in order on error/rate-limit
+      models, // OpenRouter tries these in order on error/rate-limit/unavailability
       response_format: { type: "json_object" },
       messages: [
         {
