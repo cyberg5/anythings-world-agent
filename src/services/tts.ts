@@ -1,28 +1,71 @@
-import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
-import path from "path";
-import { rename } from "fs/promises";
+import fetch from "node-fetch";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { writeFile, stat } from "fs/promises";
 import { config } from "../config.js";
 
+const run = promisify(execFile);
+
 /**
- * Free narration via Microsoft Edge's "Read Aloud" engine — no signup, no API
- * key, no per-character cost. It's an unofficial use of Microsoft's endpoint
- * (there's no official free public API for it), so if Microsoft ever changes
- * it, this package's maintainers usually patch quickly, but check
- * https://www.npmjs.com/package/msedge-tts if synthesis suddenly starts
- * failing everywhere at once.
+ * Narration via Google Cloud Text-to-Speech (official, paid-tier-capable API
+ * with a genuinely generous free allowance — see README). Replaces the
+ * earlier unofficial msedge-tts integration, which occasionally returned
+ * corrupt/silent responses in production with no error thrown, resulting in
+ * uploaded videos that had captions and video but dead silence underneath.
  *
- * Voice list: see https://learn.microsoft.com/azure/ai-services/speech-service/language-support?tabs=tts
+ * TTS_VOICE in .env should be a real Google voice name, e.g. "en-US-Neural2-D"
+ * (see https://cloud.google.com/text-to-speech/docs/voices for the full list).
+ * The language code is derived automatically from the voice name's first two
+ * segments (e.g. "en-US" from "en-US-Neural2-D").
  */
 export async function synthesizeSpeech(text: string, outPath: string): Promise<string> {
-  const tts = new MsEdgeTTS();
-  await tts.setMetadata(config.ttsVoice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+  const languageCode = config.ttsVoice.split("-").slice(0, 2).join("-");
 
-  const dir = path.dirname(outPath);
-  const { audioFilePath } = await tts.toFile(dir, text);
+  const res = await fetch(
+    `https://texttospeech.googleapis.com/v1/text:synthesize?key=${config.googleTtsApiKey}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        input: { text },
+        voice: { languageCode, name: config.ttsVoice },
+        audioConfig: { audioEncoding: "MP3" },
+      }),
+    }
+  );
 
-  // msedge-tts names the file itself (a hash); move it to the path the caller expects.
-  if (audioFilePath !== outPath) {
-    await rename(audioFilePath, outPath);
+  if (!res.ok) {
+    throw new Error(`Google TTS request failed: ${res.status} ${await res.text()}`);
   }
+
+  const data = (await res.json()) as any;
+  if (!data.audioContent) {
+    throw new Error(`Google TTS returned no audio content. Raw response: ${JSON.stringify(data)}`);
+  }
+
+  await writeFile(outPath, Buffer.from(data.audioContent, "base64"));
+  await assertValidAudio(outPath, text);
   return outPath;
+}
+
+/** Lightweight sanity check — a real API rarely returns garbage, but a corrupt
+ *  or truncated write is still worth catching before it reaches ffmpeg. */
+async function assertValidAudio(filePath: string, text: string): Promise<void> {
+  const { size } = await stat(filePath);
+  if (size < 500) {
+    throw new Error(`TTS output file suspiciously small (${size} bytes) for text: "${text.slice(0, 60)}..."`);
+  }
+
+  const { stdout } = await run("ffprobe", [
+    "-v", "error",
+    "-show_entries", "format=duration",
+    "-of", "default=noprint_wrappers=1:nokey=1",
+    filePath,
+  ]);
+  const duration = parseFloat(stdout.trim());
+  const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
+  const minExpectedSeconds = Math.max(0.5, wordCount / 5);
+  if (!duration || duration < minExpectedSeconds * 0.5) {
+    throw new Error(`TTS output too short (${duration}s for an expected ~${minExpectedSeconds.toFixed(1)}s).`);
+  }
 }
