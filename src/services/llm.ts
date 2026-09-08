@@ -1,128 +1,90 @@
-import fetch from "node-fetch";
+import { MsEdgeTTS, OUTPUT_FORMAT } from "msedge-tts";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import path from "path";
+import { rename, stat, unlink } from "fs/promises";
 import { config } from "../config.js";
 
+const run = promisify(execFile);
+
 /**
- * Free-tier LLM access via OpenRouter.
+ * Free narration via Microsoft Edge's "Read Aloud" engine — no signup, no API
+ * key, no per-character cost. It's an unofficial use of Microsoft's endpoint
+ * (there's no official free public API for it), so if Microsoft ever changes
+ * it, this package's maintainers usually patch quickly, but check
+ * https://www.npmjs.com/package/msedge-tts if synthesis suddenly starts
+ * failing everywhere at once.
  *
- * We tried two approaches that both broke within days:
- *   1. OpenRouter's "openrouter/free" auto-router — sometimes silently routed
- *      to a moderation-only model that returns "User Safety: safe" instead of
- *      a real completion.
- *   2. A hardcoded list of specific free model slugs — free-tier availability
- *      rotates constantly, and slugs that were free one day 404 as
- *      "unavailable for free" days later.
+ * IMPORTANT: this free endpoint occasionally returns a corrupt/near-empty
+ * response (seen in production: entire segments rendered with captions but
+ * dead silence underneath, because the "audio" file was garbage that ffmpeg
+ * silently decoded as a long block of silence instead of erroring). This
+ * function now verifies the output before trusting it, and retries.
  *
- * The fix: fetch OpenRouter's live model catalog at the start of each run,
- * filter it ourselves for models that are ACTUALLY free (price is really 0,
- * not just this week) and that look like real text chat models (excluding
- * anything with "guard"/"moderation" in the name, which tend to be the
- * safety-classifier models that caused the "User Safety: safe" bug), then
- * pass a handful of them as OpenRouter's `models` fallback array. This is
- * self-healing — it can never go stale, because it never hardcodes a slug.
+ * Voice list: see https://learn.microsoft.com/azure/ai-services/speech-service/language-support?tabs=tts
  */
-let cachedFreeModels: string[] | null = null;
+export async function synthesizeSpeech(text: string, outPath: string): Promise<string> {
+  const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
+  const minExpectedSeconds = Math.max(0.8, wordCount / 4);
 
-async function getFreeModels(): Promise<string[]> {
-  if (cachedFreeModels) return cachedFreeModels;
+  const maxAttempts = 3;
+  let lastError: unknown;
 
-  const res = await fetch("https://openrouter.ai/api/v1/models");
-  if (!res.ok) {
-    throw new Error(`Failed to fetch OpenRouter model list: ${res.status}`);
-  }
-  const data = (await res.json()) as any;
-  const models: any[] = data.data ?? [];
-
-  const candidates = models
-    .filter((m) => {
-      const promptPrice = parseFloat(m?.pricing?.prompt ?? "1");
-      const completionPrice = parseFloat(m?.pricing?.completion ?? "1");
-      const isFree = promptPrice === 0 && completionPrice === 0;
-      const outModalities: string[] = m?.architecture?.output_modalities ?? ["text"];
-      const isText = outModalities.includes("text");
-      const looksLikeModeration = /guard|moderation|safety/i.test(m.id ?? "");
-      // Some providers (seen: Google AI Studio) reject response_format even
-      // when OpenRouter lists the model as free — only trust models that
-      // explicitly advertise support for it.
-      const supportsJsonMode: string[] = m?.supported_parameters ?? [];
-      const canDoJson =
-        supportsJsonMode.includes("response_format") || supportsJsonMode.includes("structured_outputs");
-      return isFree && isText && !looksLikeModeration && canDoJson;
-    })
-    // Prefer models with a larger context window — usually the more capable, better-maintained ones.
-    // OpenRouter caps the fallback `models` array at 3 entries.
-    .sort((a, b) => (b.context_length ?? 0) - (a.context_length ?? 0))
-    .slice(0, 3)
-    .map((m) => m.id as string);
-
-  if (candidates.length === 0) {
-    throw new Error(
-      "No free text models currently support structured JSON output on OpenRouter. " +
-        "Check https://openrouter.ai/models?max_price=0 for what's available."
-    );
-  }
-
-  cachedFreeModels = candidates;
-  return candidates;
-}
-
-function extractJsonObject(text: string): string {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error(`No JSON object found in output:\n${text}`);
-  }
-  return text.slice(start, end + 1);
-}
-
-export async function askForJson<T>(systemPrompt: string, userPrompt: string): Promise<T> {
-  const models = await getFreeModels();
-
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.openRouterApiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://github.com/",
-      "X-Title": config.channelName.replace(/[^\x20-\x7E]/g, "").trim(),
-    },
-    body: JSON.stringify({
-      models, // OpenRouter tries these in order on error/rate-limit/unavailability
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content:
-            systemPrompt +
-            `\n\nRespond with ONLY raw JSON, no markdown fences, no commentary, no reasoning ` +
-            `shown before or after. Wrap the whole answer in a single top-level JSON object ` +
-            `with one key "result" — e.g. {"result": <your answer here>}.`,
-        },
-        { role: "user", content: userPrompt },
-      ],
-      temperature: 0.7,
-    }),
-  });
-
-  if (!res.ok) {
-    throw new Error(`OpenRouter request failed: ${res.status} ${await res.text()}`);
-  }
-
-  const data = (await res.json()) as any;
-  const text: string = data.choices?.[0]?.message?.content ?? "";
-
-  let parsed: any;
-  try {
-    parsed = JSON.parse(text.trim());
-  } catch {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      parsed = JSON.parse(extractJsonObject(text));
-    } catch {
-      throw new Error(`LLM did not return valid JSON. Raw output:\n${text}`);
+      const tts = new MsEdgeTTS();
+      await tts.setMetadata(config.ttsVoice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3);
+
+      const dir = path.dirname(outPath);
+      const { audioFilePath } = await tts.toFile(dir, text);
+      if (audioFilePath !== outPath) {
+        await rename(audioFilePath, outPath);
+      }
+
+      await assertValidAudio(outPath, minExpectedSeconds);
+      return outPath;
+    } catch (err) {
+      lastError = err;
+      await unlink(outPath).catch(() => {});
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+      }
     }
   }
 
-  if (!("result" in parsed)) {
-    throw new Error(`LLM response missing "result" key. Raw output:\n${text}`);
+  throw new Error(
+    `TTS produced invalid/silent audio for text after ${maxAttempts} attempts: "${text.slice(0, 60)}...". ` +
+      `Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`
+  );
+}
+
+/** Confirms the synthesized file is a real, non-trivial audio clip — not empty, not corrupt, not silent. */
+async function assertValidAudio(filePath: string, minExpectedSeconds: number): Promise<void> {
+  const { size } = await stat(filePath);
+  if (size < 2000) {
+    throw new Error(`TTS output file suspiciously small (${size} bytes) — likely a failed/corrupt response.`);
   }
-  return parsed.result as T;
+
+  const { stdout: durationOut } = await run("ffprobe", [
+    "-v", "error",
+    "-show_entries", "format=duration",
+    "-of", "default=noprint_wrappers=1:nokey=1",
+    filePath,
+  ]);
+  const duration = parseFloat(durationOut.trim());
+  if (!duration || duration < minExpectedSeconds * 0.5) {
+    throw new Error(`TTS output too short (${duration}s for an expected ~${minExpectedSeconds.toFixed(1)}s).`);
+  }
+
+  const { stdout: volumeOut } = await run("ffmpeg", [
+    "-i", filePath,
+    "-af", "volumedetect",
+    "-f", "null",
+    "-",
+  ]).catch((e) => ({ stdout: "", stderr: e.stderr ?? "" } as any));
+  const stderrText = (volumeOut as any).stderr ?? volumeOut;
+  const meanMatch = /mean_volume:\s*(-?\d+(\.\d+)?)\s*dB/.exec(String(stderrText));
+  if (meanMatch && parseFloat(meanMatch[1]) < -50) {
+    throw new Error(`TTS output is effectively silent (mean volume ${meanMatch[1]} dB).`);
+  }
 }
