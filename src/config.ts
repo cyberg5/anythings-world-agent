@@ -17,9 +17,11 @@ export const config = {
   openRouterApiKey: required("OPENROUTER_API_KEY"),
   tavilyApiKey: required("TAVILY_API_KEY"),
 
-  // Free TTS via Microsoft Edge's Read Aloud engine — no API key needed.
-  // Override TTS_VOICE in .env to change narrator voice/language.
-  ttsVoice: process.env.TTS_VOICE?.trim() || "en-US-AndrewNeural",
+    // Google Cloud Text-to-Speech (official API, generous free tier).
+  // TTS_VOICE must be a real Google voice name — default is a natural-sounding
+  // Neural2 voice. See https://cloud.google.com/text-to-speech/docs/voices
+  googleTtsApiKey: required("GOOGLE_TTS_API_KEY"),
+  ttsVoice: process.env.TTS_VOICE?.trim() || "en-US-Neural2-D",
 
   pexelsApiKey: required("PEXELS_API_KEY"),
 
