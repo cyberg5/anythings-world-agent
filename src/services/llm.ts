@@ -40,15 +40,25 @@ async function getFreeModels(): Promise<string[]> {
       const outModalities: string[] = m?.architecture?.output_modalities ?? ["text"];
       const isText = outModalities.includes("text");
       const looksLikeModeration = /guard|moderation|safety/i.test(m.id ?? "");
-      return isFree && isText && !looksLikeModeration;
+      // Some providers (seen: Google AI Studio) reject response_format even
+      // when OpenRouter lists the model as free — only trust models that
+      // explicitly advertise support for it.
+      const supportsJsonMode: string[] = m?.supported_parameters ?? [];
+      const canDoJson =
+        supportsJsonMode.includes("response_format") || supportsJsonMode.includes("structured_outputs");
+      return isFree && isText && !looksLikeModeration && canDoJson;
     })
     // Prefer models with a larger context window — usually the more capable, better-maintained ones.
+    // OpenRouter caps the fallback `models` array at 3 entries.
     .sort((a, b) => (b.context_length ?? 0) - (a.context_length ?? 0))
     .slice(0, 3)
     .map((m) => m.id as string);
 
   if (candidates.length === 0) {
-    throw new Error("No free text models currently available on OpenRouter.");
+    throw new Error(
+      "No free text models currently support structured JSON output on OpenRouter. " +
+        "Check https://openrouter.ai/models?max_price=0 for what's available."
+    );
   }
 
   cachedFreeModels = candidates;
