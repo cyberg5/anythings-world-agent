@@ -33,6 +33,7 @@ jobs:
           CHANNEL_HANDLE: "@Any-Future7"
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          GOOGLE_TTS_API_KEY: ${{ secrets.GOOGLE_TTS_API_KEY }}
           TTS_VOICE: ${{ secrets.TTS_VOICE }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
