@@ -10,14 +10,22 @@ export const BRAND = {
   height: 1920,
   fps: 30,
   fontColor: "white",
-  accentColor: "0x1FD1A1", // teal accent used for the title-card underline/caption box
-  fontFile: "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", // swap for a licensed brand font if you have one
+  accentColor: "0x1FD1A1",
+  fontFile: "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
   captionFontSize: 46,
   titleFontSize: 56,
 };
 
 function escapeDrawtext(text: string): string {
-  return text.replace(/:/g, "\\:").replace(/'/g, "\\'");
+  return text
+    .replace(/%/g, " percent")
+    .replace(/\s+/g, " ")
+    .replace(/'/g, "")
+    .replace(/:/g, "\\:");
+}
+
+function escapeDrawtextFile(text: string): string {
+  return text.replace(/%/g, " percent").replace(/\s+/g, " ").replace(/'/g, "");
 }
 
 /** Wraps text onto multiple lines (drawtext doesn't auto-wrap) at a safe width. */
@@ -53,11 +61,9 @@ export async function buildSegmentClip(opts: {
   const caption = escapeDrawtext(captionText);
 
   const filter = [
-    // Ken Burns: slow zoom-in over the clip duration
     `zoompan=z='min(zoom+0.0007,1.15)':d=${frames}:s=${BRAND.width}x${BRAND.height}:fps=${BRAND.fps}`,
-    // Caption box: semi-transparent bar behind bottom-third text, safe within Shorts UI
     `drawtext=fontfile=${BRAND.fontFile}:text='${caption}':fontcolor=${BRAND.fontColor}:fontsize=${BRAND.captionFontSize}:` +
-      `box=1:boxcolor=0x000000AA:boxborderw=20:x=(w-text_w)/2:y=h-380:line_spacing=8`,
+      `box=1:boxcolor=0x000000AA:boxborderw=20:x=(w-text_w)/2:y=h-380:line_spacing=8:expansion=none`,
   ].join(",");
 
   await run("ffmpeg", [
@@ -99,12 +105,10 @@ export async function applyBrandingPass(opts: {
   const { inputPath, logoPath, channelName, onScreenTitle, outPath, workDir } = opts;
   const fs = await import("fs/promises");
 
-  // 1. Build a 2-second branded intro card (solid brand background + title + channel wordmark).
   const introPath = path.join(workDir, "intro_card.mp4");
-  const title = escapeDrawtext(wrapForDrawtext(onScreenTitle, 18));
+  const title = escapeDrawtextFile(wrapForDrawtext(onScreenTitle, 18));
   const channel = escapeDrawtext(channelName);
 
-  // Write title to a temp textfile so multi-line text and quoting survive the shell/ffmpeg boundary.
   const titleFile = path.join(workDir, "intro_title.txt");
   await fs.writeFile(titleFile, title);
 
@@ -117,19 +121,17 @@ export async function applyBrandingPass(opts: {
     `[1:v]scale=220:-1[logo];` +
       `[0:v][logo]overlay=(W-w)/2:340[bg];` +
       `[bg]drawtext=fontfile=${BRAND.fontFile}:textfile='${titleFile}':fontcolor=white:fontsize=${BRAND.titleFontSize}:` +
-      `x=(w-text_w)/2:y=700:line_spacing=14:text_align=center,` +
+      `x=(w-text_w)/2:y=700:line_spacing=14:text_align=center:expansion=none,` +
       `drawtext=fontfile=${BRAND.fontFile}:text='${channel}':fontcolor=${BRAND.accentColor}:fontsize=36:` +
-      `x=(w-text_w)/2:y=h-160`,
+      `x=(w-text_w)/2:y=h-160:expansion=none`,
     "-c:v", "libx264",
     "-pix_fmt", "yuv420p",
     "-an",
     introPath,
   ]);
 
-  // 2. Concat intro + main video.
   const combined = path.join(workDir, "combined.mp4");
   const listFile = path.join(workDir, "brand_concat.txt");
-  // Re-encode intro to match main video's audio presence by adding silent audio track.
   const introWithAudio = path.join(workDir, "intro_with_audio.mp4");
   await run("ffmpeg", [
     "-y", "-i", introPath,
@@ -140,7 +142,6 @@ export async function applyBrandingPass(opts: {
   await fs.writeFile(listFile, [introWithAudio, inputPath].map((p) => `file '${p}'`).join("\n"));
   await run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", combined]);
 
-  // 3. Watermark logo, small, bottom-right corner, for the whole video.
   await run("ffmpeg", [
     "-y",
     "-i", combined,
