@@ -1,55 +1,49 @@
-import fetch from "node-fetch";
+import { spawn } from "child_process";
 import { execFile } from "child_process";
 import { promisify } from "util";
-import { writeFile, stat } from "fs/promises";
+import { stat } from "fs/promises";
 import { config } from "../config.js";
 
 const run = promisify(execFile);
 
 /**
- * Narration via Google Cloud Text-to-Speech (official, paid-tier-capable API
- * with a genuinely generous free allowance — see README). Replaces the
- * earlier unofficial msedge-tts integration, which occasionally returned
- * corrupt/silent responses in production with no error thrown, resulting in
- * uploaded videos that had captions and video but dead silence underneath.
+ * Narration via Piper (https://github.com/rhasspy/piper) — a fully local,
+ * offline neural TTS engine. No API key, no account, no billing, no card,
+ * and no dependency on any hosted service being reachable/unblocked for you
+ * at synthesis time: the `piper` binary and voice model run entirely inside
+ * the GitHub Actions runner. This replaced two earlier attempts:
+ *   - msedge-tts (unofficial, occasionally returned corrupt/silent audio)
+ *   - Google Cloud TTS (official, but requires a billing account with an
+ *     internationally-chargeable card, which isn't available to everyone)
  *
- * TTS_VOICE in .env should be a real Google voice name, e.g. "en-US-Neural2-D"
- * (see https://cloud.google.com/text-to-speech/docs/voices for the full list).
- * The language code is derived automatically from the voice name's first two
- * segments (e.g. "en-US" from "en-US-Neural2-D").
+ * Setup: `pip install piper-tts` (see .github/workflows/daily-run.yml) — the
+ * first run downloads the ~60MB voice model automatically from Hugging Face
+ * and caches it; every run after that reuses the cached copy for that CI run.
+ *
+ * TTS_VOICE in .env should be a Piper voice name, e.g. "en_US-lessac-medium".
+ * Full voice list: https://github.com/rhasspy/piper/blob/master/VOICES.md
  */
 export async function synthesizeSpeech(text: string, outPath: string): Promise<string> {
-  const languageCode = config.ttsVoice.split("-").slice(0, 2).join("-");
+  await new Promise<void>((resolve, reject) => {
+    const proc = spawn("piper", ["--model", config.ttsVoice, "--output_file", outPath]);
 
-  const res = await fetch(
-    `https://texttospeech.googleapis.com/v1/text:synthesize?key=${config.googleTtsApiKey}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        input: { text },
-        voice: { languageCode, name: config.ttsVoice },
-        audioConfig: { audioEncoding: "MP3" },
-      }),
-    }
-  );
+    let stderr = "";
+    proc.stderr.on("data", (d) => (stderr += d.toString()));
+    proc.on("error", reject);
+    proc.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`piper exited with code ${code}: ${stderr}`));
+    });
 
-  if (!res.ok) {
-    throw new Error(`Google TTS request failed: ${res.status} ${await res.text()}`);
-  }
+    proc.stdin.write(text);
+    proc.stdin.end();
+  });
 
-  const data = (await res.json()) as any;
-  if (!data.audioContent) {
-    throw new Error(`Google TTS returned no audio content. Raw response: ${JSON.stringify(data)}`);
-  }
-
-  await writeFile(outPath, Buffer.from(data.audioContent, "base64"));
   await assertValidAudio(outPath, text);
   return outPath;
 }
 
-/** Lightweight sanity check — a real API rarely returns garbage, but a corrupt
- *  or truncated write is still worth catching before it reaches ffmpeg. */
+/** Confirms the synthesized file is a real, non-trivial audio clip. */
 async function assertValidAudio(filePath: string, text: string): Promise<void> {
   const { size } = await stat(filePath);
   if (size < 500) {
