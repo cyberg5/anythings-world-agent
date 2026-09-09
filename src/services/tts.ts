@@ -2,9 +2,16 @@ import { spawn } from "child_process";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import { stat } from "fs/promises";
+import os from "os";
+import path from "path";
 import { config } from "../config.js";
 
 const run = promisify(execFile);
+
+// Must match the --download-dir used in .github/workflows/daily-run.yml's
+// "Download Piper voice model" step, or piper won't find the model it
+// already downloaded and will fail with "Unable to find voice".
+const PIPER_DATA_DIR = path.join(os.homedir(), ".local", "share", "piper-voices");
 
 /**
  * Narration via Piper (https://github.com/rhasspy/piper) — a fully local,
@@ -16,16 +23,22 @@ const run = promisify(execFile);
  *   - Google Cloud TTS (official, but requires a billing account with an
  *     internationally-chargeable card, which isn't available to everyone)
  *
- * Setup: `pip install piper-tts` (see .github/workflows/daily-run.yml) — the
- * first run downloads the ~60MB voice model automatically from Hugging Face
- * and caches it; every run after that reuses the cached copy for that CI run.
+ * Setup: the workflow installs piper-tts AND explicitly pre-downloads the
+ * voice model into PIPER_DATA_DIR before the pipeline runs (newer piper-tts
+ * versions no longer auto-download on first use — it errors instead with
+ * "Unable to find voice", which is why --data-dir must point at wherever
+ * that download step put the files).
  *
  * TTS_VOICE in .env should be a Piper voice name, e.g. "en_US-lessac-medium".
  * Full voice list: https://github.com/rhasspy/piper/blob/master/VOICES.md
  */
 export async function synthesizeSpeech(text: string, outPath: string): Promise<string> {
   await new Promise<void>((resolve, reject) => {
-    const proc = spawn("piper", ["--model", config.ttsVoice, "--output_file", outPath]);
+    const proc = spawn("piper", [
+      "--model", config.ttsVoice,
+      "--data-dir", PIPER_DATA_DIR,
+      "--output_file", outPath,
+    ]);
 
     let stderr = "";
     proc.stderr.on("data", (d) => (stderr += d.toString()));
