@@ -26,6 +26,15 @@ jobs:
           pip install --user piper-tts --break-system-packages
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
+      - name: Download Piper voice model
+        # Must match TTS_VOICE (default en_US-lessac-medium) and the
+        # PIPER_DATA_DIR path in src/services/tts.ts. Newer piper-tts no
+        # longer auto-downloads on first use, so this step is required —
+        # skipping it fails with "Unable to find voice".
+        run: |
+          python3 -m piper.download_voices en_US-lessac-medium \
+            --download-dir "$HOME/.local/share/piper-voices"
+
       - name: Install dependencies
         run: npm ci
 
