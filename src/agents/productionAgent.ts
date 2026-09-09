@@ -16,7 +16,7 @@ export async function produceVideo(script: VideoScript): Promise<ProducedVideo> 
     let totalDuration = 0;
 
     for (const [i, seg] of script.narrationSegments.entries()) {
-      const audioPath = path.join(workDir, `narration_${i}.mp3`);
+      const audioPath = path.join(workDir, `narration_${i}.wav`); // Piper outputs WAV
       const imagePath = path.join(workDir, `image_${i}.jpg`);
       const clipPath = path.join(workDir, `segment_${i}.mp4`);
 
