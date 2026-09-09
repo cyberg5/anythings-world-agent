@@ -20,8 +20,7 @@ export const config = {
     // Google Cloud Text-to-Speech (official API, generous free tier).
   // TTS_VOICE must be a real Google voice name — default is a natural-sounding
   // Neural2 voice. See https://cloud.google.com/text-to-speech/docs/voices
-  googleTtsApiKey: required("GOOGLE_TTS_API_KEY"),
-  ttsVoice: process.env.TTS_VOICE?.trim() || "en-US-Neural2-D",
+  ttsVoice: process.env.TTS_VOICE?.trim() || "en_US-lessac-medium",
 
   pexelsApiKey: required("PEXELS_API_KEY"),
 
