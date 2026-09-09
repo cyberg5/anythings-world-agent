@@ -20,10 +20,12 @@ jobs:
 
       - name: Install ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu
+
       - name: Install Piper TTS (local, free, offline — no API key)
         run: |
           pip install --user piper-tts --break-system-packages
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
       - name: Install dependencies
         run: npm ci
 
