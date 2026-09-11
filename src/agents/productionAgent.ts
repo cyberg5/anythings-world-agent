@@ -2,7 +2,7 @@ import path from "path";
 import { mkdtemp, rm, mkdir } from "fs/promises";
 import { tmpdir } from "os";
 import { synthesizeSpeech } from "../services/tts.js";
-import { fetchStockImage } from "../services/visuals.js";
+import { fetchStockImage, fetchStockVideo } from "../services/visuals.js";
 import { buildSegmentClip, concatClips, applyBrandingPass } from "../branding/template.js";
 import { config } from "../config.js";
 import type { ProducedVideo, VideoScript } from "../types.js";
@@ -16,19 +16,35 @@ export async function produceVideo(script: VideoScript): Promise<ProducedVideo> 
     let totalDuration = 0;
 
     for (const [i, seg] of script.narrationSegments.entries()) {
-      const audioPath = path.join(workDir, `narration_${i}.wav`); // Piper outputs WAV
-      const imagePath = path.join(workDir, `image_${i}.jpg`);
+      const audioPath = path.join(workDir, `narration_${i}.wav`);
       const clipPath = path.join(workDir, `segment_${i}.mp4`);
 
       await synthesizeSpeech(seg.text, audioPath);
-      await fetchStockImage(seg.visualQuery, imagePath);
-      await buildSegmentClip({
-        imagePath,
-        audioPath,
-        durationSeconds: seg.approxSeconds,
-        captionText: seg.text,
-        outPath: clipPath,
-      });
+
+      const videoPath = path.join(workDir, `video_${i}.mp4`);
+      const fetchedVideo = await fetchStockVideo(seg.visualQuery, videoPath).catch(() => null);
+
+      if (fetchedVideo) {
+        await buildSegmentClip({
+          mediaPath: fetchedVideo,
+          mediaType: "video",
+          audioPath,
+          durationSeconds: seg.approxSeconds,
+          captionText: seg.text,
+          outPath: clipPath,
+        });
+      } else {
+        const imagePath = path.join(workDir, `image_${i}.jpg`);
+        await fetchStockImage(seg.visualQuery, imagePath);
+        await buildSegmentClip({
+          mediaPath: imagePath,
+          mediaType: "image",
+          audioPath,
+          durationSeconds: seg.approxSeconds,
+          captionText: seg.text,
+          outPath: clipPath,
+        });
+      }
 
       clipPaths.push(clipPath);
       totalDuration += seg.approxSeconds;
@@ -38,7 +54,7 @@ export async function produceVideo(script: VideoScript): Promise<ProducedVideo> 
     await concatClips(clipPaths, mainCut, workDir);
 
     const finalPath = path.resolve(`output/${slugify(script.topic)}.mp4`);
-    await mkdir(path.dirname(finalPath), { recursive: true }); // output/ may not exist yet (git doesn't track empty dirs)
+    await mkdir(path.dirname(finalPath), { recursive: true });
     await applyBrandingPass({
       inputPath: mainCut,
       logoPath: LOGO_PATH,
