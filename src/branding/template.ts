@@ -19,16 +19,15 @@ export const BRAND = {
 function escapeDrawtext(text: string): string {
   return text
     .replace(/%/g, " percent")
-    .replace(/\s+/g, " ")
+    .replace(/[ \t]+/g, " ")
     .replace(/'/g, "")
     .replace(/:/g, "\\:");
 }
 
 function escapeDrawtextFile(text: string): string {
-  return text.replace(/%/g, " percent").replace(/\s+/g, " ").replace(/'/g, "");
+  return text.replace(/%/g, " percent").replace(/[ \t]+/g, " ").replace(/'/g, "");
 }
 
-/** Wraps text onto multiple lines (drawtext doesn't auto-wrap) at a safe width. */
 function wrapForDrawtext(text: string, maxCharsPerLine = 18): string {
   const words = text.split(/\s+/);
   const lines: string[] = [];
@@ -46,38 +45,67 @@ function wrapForDrawtext(text: string, maxCharsPerLine = 18): string {
 }
 
 /**
- * One narration segment: a still image, slowly zoomed (Ken Burns effect),
- * with the narration audio and a burned-in caption of that segment's text.
+ * One narration segment, built from either a real stock VIDEO clip (looped
+ * and cropped to fill the frame — this is what makes the result look like
+ * actual footage instead of a slideshow) or, when no suitable clip exists
+ * for that segment's topic, a still image with a slow Ken Burns zoom as a
+ * fallback. Either way: narration audio + a burned-in caption on top.
  */
 export async function buildSegmentClip(opts: {
-  imagePath: string;
+  mediaPath: string;
+  mediaType: "video" | "image";
   audioPath: string;
   durationSeconds: number;
   captionText: string;
   outPath: string;
 }): Promise<string> {
-  const { imagePath, audioPath, durationSeconds, captionText, outPath } = opts;
-  const frames = Math.round(durationSeconds * BRAND.fps);
+  const { mediaPath, mediaType, audioPath, durationSeconds, captionText, outPath } = opts;
   const caption = escapeDrawtext(captionText);
 
-  const filter = [
-    `zoompan=z='min(zoom+0.0007,1.15)':d=${frames}:s=${BRAND.width}x${BRAND.height}:fps=${BRAND.fps}`,
+  const captionFilter =
     `drawtext=fontfile=${BRAND.fontFile}:text='${caption}':fontcolor=${BRAND.fontColor}:fontsize=${BRAND.captionFontSize}:` +
-      `box=1:boxcolor=0x000000AA:boxborderw=20:x=(w-text_w)/2:y=h-380:line_spacing=8:expansion=none`,
-  ].join(",");
+    `box=1:boxcolor=0x000000AA:boxborderw=20:x=(w-text_w)/2:y=h-380:line_spacing=8:expansion=none`;
 
-  await run("ffmpeg", [
-    "-y",
-    "-loop", "1",
-    "-i", imagePath,
-    "-i", audioPath,
-    "-filter:v", filter,
-    "-c:v", "libx264",
-    "-c:a", "aac",
-    "-shortest",
-    "-pix_fmt", "yuv420p",
-    outPath,
-  ]);
+  if (mediaType === "video") {
+    const filterComplex =
+      `[0:v]scale=${BRAND.width}:${BRAND.height}:force_original_aspect_ratio=increase,` +
+      `crop=${BRAND.width}:${BRAND.height},setsar=1,${captionFilter}[v]`;
+
+    await run("ffmpeg", [
+      "-y",
+      "-stream_loop", "-1",
+      "-i", mediaPath,
+      "-i", audioPath,
+      "-filter_complex", filterComplex,
+      "-map", "[v]",
+      "-map", "1:a",
+      "-c:v", "libx264",
+      "-c:a", "aac",
+      "-shortest",
+      "-pix_fmt", "yuv420p",
+      outPath,
+    ]);
+  } else {
+    const frames = Math.round(durationSeconds * BRAND.fps);
+    const filter = [
+      `zoompan=z='min(zoom+0.0007,1.15)':d=${frames}:s=${BRAND.width}x${BRAND.height}:fps=${BRAND.fps}`,
+      captionFilter,
+    ].join(",");
+
+    await run("ffmpeg", [
+      "-y",
+      "-loop", "1",
+      "-i", mediaPath,
+      "-i", audioPath,
+      "-filter:v", filter,
+      "-c:v", "libx264",
+      "-c:a", "aac",
+      "-shortest",
+      "-pix_fmt", "yuv420p",
+      outPath,
+    ]);
+  }
+
   return outPath;
 }
 
