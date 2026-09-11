@@ -10,24 +10,17 @@ const run = promisify(execFile);
 const PIPER_DATA_DIR = path.join(os.homedir(), ".local", "share", "piper-voices");
 
 export async function synthesizeSpeech(text: string, outPath: string): Promise<string> {
-  const maxAttempts = 3;
-  let lastError: unknown;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      await runPiper(text, outPath);
-      await assertValidAudio(outPath, text);
-      return outPath;
-    } catch (err) {
-      lastError = err;
-      await unlink(outPath).catch(() => {});
-    }
+  try {
+    await runPiper(text, outPath);
+    await assertValidAudio(outPath, text);
+    return outPath;
+  } catch (err) {
+    await unlink(outPath).catch(() => {});
+    throw new Error(
+      `Piper produced invalid audio for text: "${text.slice(0, 60)}...". ` +
+        `${err instanceof Error ? err.message : String(err)}`
+    );
   }
-
-  throw new Error(
-    `Piper produced invalid/silent audio for text after ${maxAttempts} attempts: "${text.slice(0, 60)}...". ` +
-      `Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`
-  );
 }
 
 function runPiper(text: string, outPath: string): Promise<void> {
@@ -54,7 +47,7 @@ function runPiper(text: string, outPath: string): Promise<void> {
 async function assertValidAudio(filePath: string, text: string): Promise<void> {
   const { size } = await stat(filePath);
   if (size < 500) {
-    throw new Error(`TTS output file suspiciously small (${size} bytes) for text: "${text.slice(0, 60)}..."`);
+    throw new Error(`Output file suspiciously small (${size} bytes).`);
   }
 
   const { stdout: durationOut } = await run("ffprobe", [
@@ -67,15 +60,21 @@ async function assertValidAudio(filePath: string, text: string): Promise<void> {
   const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
   const minExpectedSeconds = Math.max(0.5, wordCount / 5);
   if (!duration || duration < minExpectedSeconds * 0.5) {
-    throw new Error(`TTS output too short (${duration}s for an expected ~${minExpectedSeconds.toFixed(1)}s).`);
+    throw new Error(`Output too short (${duration}s for an expected ~${minExpectedSeconds.toFixed(1)}s).`);
   }
 
-  const volumeResult = await run("ffmpeg", ["-i", filePath, "-af", "volumedetect", "-f", "null", "-"]).catch(
-    (e) => ({ stdout: "", stderr: e.stderr ?? "" })
+  const result = await run("ffmpeg", [
+    "-i", filePath,
+    "-af", "silencedetect=noise=-35dB:d=1.2",
+    "-f", "null", "-",
+  ]).catch((e) => ({ stdout: "", stderr: e.stderr ?? "" }));
+  const stderrText = String((result as any).stderr ?? "");
+
+  const silenceDurations = [...stderrText.matchAll(/silence_duration:\s*([\d.]+)/g)].map((m) =>
+    parseFloat(m[1])
   );
-  const stderrText = String((volumeResult as any).stderr ?? "");
-  const meanMatch = /mean_volume:\s*(-?\d+(\.\d+)?)\s*dB/.exec(stderrText);
-  if (meanMatch && parseFloat(meanMatch[1]) < -50) {
-    throw new Error(`TTS output is effectively silent (mean volume ${meanMatch[1]} dB).`);
+  const worstSilence = Math.max(0, ...silenceDurations);
+  if (worstSilence > 1.5) {
+    throw new Error(`Output contains a ${worstSilence.toFixed(1)}s silent gap — likely broken synthesis.`);
   }
 }
