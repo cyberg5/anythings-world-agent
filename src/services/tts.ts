@@ -1,39 +1,37 @@
-import { spawn } from "child_process";
-import { execFile } from "child_process";
+import { spawn, execFile } from "child_process";
 import { promisify } from "util";
-import { stat } from "fs/promises";
+import { stat, unlink } from "fs/promises";
 import os from "os";
 import path from "path";
 import { config } from "../config.js";
 
 const run = promisify(execFile);
 
-// Must match the --download-dir used in .github/workflows/daily-run.yml's
-// "Download Piper voice model" step, or piper won't find the model it
-// already downloaded and will fail with "Unable to find voice".
 const PIPER_DATA_DIR = path.join(os.homedir(), ".local", "share", "piper-voices");
 
-/**
- * Narration via Piper (https://github.com/rhasspy/piper) — a fully local,
- * offline neural TTS engine. No API key, no account, no billing, no card,
- * and no dependency on any hosted service being reachable/unblocked for you
- * at synthesis time: the `piper` binary and voice model run entirely inside
- * the GitHub Actions runner. This replaced two earlier attempts:
- *   - msedge-tts (unofficial, occasionally returned corrupt/silent audio)
- *   - Google Cloud TTS (official, but requires a billing account with an
- *     internationally-chargeable card, which isn't available to everyone)
- *
- * Setup: the workflow installs piper-tts AND explicitly pre-downloads the
- * voice model into PIPER_DATA_DIR before the pipeline runs (newer piper-tts
- * versions no longer auto-download on first use — it errors instead with
- * "Unable to find voice", which is why --data-dir must point at wherever
- * that download step put the files).
- *
- * TTS_VOICE in .env should be a Piper voice name, e.g. "en_US-lessac-medium".
- * Full voice list: https://github.com/rhasspy/piper/blob/master/VOICES.md
- */
 export async function synthesizeSpeech(text: string, outPath: string): Promise<string> {
-  await new Promise<void>((resolve, reject) => {
+  const maxAttempts = 3;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await runPiper(text, outPath);
+      await assertValidAudio(outPath, text);
+      return outPath;
+    } catch (err) {
+      lastError = err;
+      await unlink(outPath).catch(() => {});
+    }
+  }
+
+  throw new Error(
+    `Piper produced invalid/silent audio for text after ${maxAttempts} attempts: "${text.slice(0, 60)}...". ` +
+      `Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`
+  );
+}
+
+function runPiper(text: string, outPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
     const proc = spawn("piper", [
       "--model", config.ttsVoice,
       "--data-dir", PIPER_DATA_DIR,
@@ -51,28 +49,33 @@ export async function synthesizeSpeech(text: string, outPath: string): Promise<s
     proc.stdin.write(text);
     proc.stdin.end();
   });
-
-  await assertValidAudio(outPath, text);
-  return outPath;
 }
 
-/** Confirms the synthesized file is a real, non-trivial audio clip. */
 async function assertValidAudio(filePath: string, text: string): Promise<void> {
   const { size } = await stat(filePath);
   if (size < 500) {
     throw new Error(`TTS output file suspiciously small (${size} bytes) for text: "${text.slice(0, 60)}..."`);
   }
 
-  const { stdout } = await run("ffprobe", [
+  const { stdout: durationOut } = await run("ffprobe", [
     "-v", "error",
     "-show_entries", "format=duration",
     "-of", "default=noprint_wrappers=1:nokey=1",
     filePath,
   ]);
-  const duration = parseFloat(stdout.trim());
+  const duration = parseFloat(durationOut.trim());
   const wordCount = text.trim().split(/\s+/).filter(Boolean).length;
   const minExpectedSeconds = Math.max(0.5, wordCount / 5);
   if (!duration || duration < minExpectedSeconds * 0.5) {
     throw new Error(`TTS output too short (${duration}s for an expected ~${minExpectedSeconds.toFixed(1)}s).`);
+  }
+
+  const volumeResult = await run("ffmpeg", ["-i", filePath, "-af", "volumedetect", "-f", "null", "-"]).catch(
+    (e) => ({ stdout: "", stderr: e.stderr ?? "" })
+  );
+  const stderrText = String((volumeResult as any).stderr ?? "");
+  const meanMatch = /mean_volume:\s*(-?\d+(\.\d+)?)\s*dB/.exec(stderrText);
+  if (meanMatch && parseFloat(meanMatch[1]) < -50) {
+    throw new Error(`TTS output is effectively silent (mean volume ${meanMatch[1]} dB).`);
   }
 }
