@@ -37,7 +37,7 @@ async function runOnce(attempt: number, format: VideoFormat): Promise<boolean> {
 async function main() {
   let published = 0;
   let attempts = 0;
-  const maxAttempts = config.videosPerRun * 3; // allow retries for QA-rejected attempts
+    const maxAttempts = config.videosPerRun * 5; // allow retries for QA-rejected attempts and transient network errors
 
   // Every Nth video overall is long-form; the rest are Shorts. Checked once
   // at the start — a long-form pick still gets retried as long-form on
