@@ -1,12 +1,7 @@
 name: AnyThings World - daily video
 
 on:
-  schedule:
-    # 06:00 UTC daily — edit to taste. This is the entire "automation" —
-    # once this file is on GitHub with the secrets below set, nothing
-    # further is required from you.
-    - cron: "47 6 * * *"
-  workflow_dispatch: {} # lets you also trigger a run manually from the Actions tab
+    workflow_dispatch: {} # lets you also trigger a run manually from the Actions tab
 
 jobs:
   produce-and-publish:
