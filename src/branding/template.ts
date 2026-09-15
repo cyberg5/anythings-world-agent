@@ -141,12 +141,29 @@ export async function buildSegmentClip(opts: {
   return outPath;
 }
 
-/** Concatenate all segment clips into one video (re-encoding for safety). */
+/**
+ * Concatenate all segment clips into one video — REAL re-encode, not stream
+ * copy. This used to say "re-encoding for safety" in a comment but actually
+ * used `-c copy`, which trusts each segment's internal timestamps as-is.
+ * Segments built from a looped stock video (`-stream_loop -1` + `-shortest`
+ * in buildSegmentClip) can end up with irregular/large internal timestamps
+ * even though ffprobe reports a normal, correct duration for that segment
+ * alone — stream-copying them together lets that irregularity propagate and
+ * can make the FINAL concatenated file's duration balloon far beyond the sum
+ * of the individual segments (a real incident: segments summing to 154s
+ * produced a 1155s final file). Re-encoding forces ffmpeg to recompute clean,
+ * monotonic timestamps from the actual decoded frames instead of trusting
+ * inherited container metadata.
+ */
 export async function concatClips(clipPaths: string[], outPath: string, workDir: string): Promise<string> {
   const listFile = path.join(workDir, "concat_list.txt");
   const fs = await import("fs/promises");
   await fs.writeFile(listFile, clipPaths.map((p) => `file '${p}'`).join("\n"));
-  await run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", outPath]);
+  await run("ffmpeg", [
+    "-y", "-f", "concat", "-safe", "0", "-i", listFile,
+    "-c:v", "libx264", "-c:a", "aac", "-ar", "44100", "-ac", "2", "-pix_fmt", "yuv420p",
+    outPath,
+  ]);
   return outPath;
 }
 
@@ -204,7 +221,13 @@ export async function applyBrandingPass(opts: {
     introWithAudio,
   ]);
   await fs.writeFile(listFile, [introWithAudio, inputPath].map((p) => `file '${p}'`).join("\n"));
-  await run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", combined]);
+  // Same fix as concatClips: real re-encode, not `-c copy`, so timestamps
+  // are recomputed cleanly instead of trusting whatever mainCut inherited.
+  await run("ffmpeg", [
+    "-y", "-f", "concat", "-safe", "0", "-i", listFile,
+    "-c:v", "libx264", "-c:a", "aac", "-ar", "44100", "-ac", "2", "-pix_fmt", "yuv420p",
+    combined,
+  ]);
 
   // 3. Watermark logo, small, bottom-right corner, for the whole video.
   await run("ffmpeg", [
