@@ -61,5 +61,19 @@ export async function writeScript(dossier: ResearchDossier): Promise<VideoScript
     `Sources:\n${sourceList}\n\n` +
     `${shortsTag} #${config.channelName.replace(/[^a-zA-Z0-9]/g, "")}`;
 
-  return { ...raw, format: dossier.format, citedSources: dossier.facts, description };
+  // The free LLM frequently ignores the segment-count instruction above and
+  // writes way more than asked — two production runs in a row got rejected
+  // by QA for running 2-3x over the target length, burning whole attempts.
+  // Enforce a hard cap here instead of just hoping the prompt is followed:
+  // trim to the first N segments (keeping the story coherent) plus the
+  // final segment (always the call-to-action, however far in it was).
+  const maxSegments = isLong ? 36 : 12;
+  let narrationSegments = raw.narrationSegments;
+  if (narrationSegments.length > maxSegments) {
+    const kept = narrationSegments.slice(0, maxSegments - 1);
+    const cta = narrationSegments[narrationSegments.length - 1];
+    narrationSegments = [...kept, cta];
+  }
+
+  return { ...raw, narrationSegments, format: dossier.format, citedSources: dossier.facts, description };
 }
