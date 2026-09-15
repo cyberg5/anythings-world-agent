@@ -50,16 +50,29 @@ export async function writeScript(dossier: ResearchDossier): Promise<VideoScript
       .join("\n")}`
   );
 
-  const sourceList = dossier.facts
-    .map((f) => `• ${f.claim}\n  ${f.sourceUrl}`)
-    .join("\n");
-
   const shortsTag = isLong ? "" : " #Shorts";
-  const description =
-    `${raw.hookLine}\n\n` +
-    `This video is scripted and narrated with AI assistance, based on the sources below.\n\n` +
-    `Sources:\n${sourceList}\n\n` +
-    `${shortsTag} #${config.channelName.replace(/[^a-zA-Z0-9]/g, "")}`;
+  const header = `${raw.hookLine}\n\nThis video is scripted and narrated with AI assistance, based on the sources below.\n\nSources:\n`;
+  const footer = `\n\n${shortsTag} #${config.channelName.replace(/[^a-zA-Z0-9]/g, "")}`;
+
+  // YouTube rejects uploads with "invalid video description" once it's too
+  // long (~5000 chars) — a real incident: a 30+-fact long-form script's full
+  // source list pushed the description over that limit and failed at upload,
+  // after the whole video had already been rendered. Build the source list
+  // fact-by-fact and stop before crossing a safe budget, rather than always
+  // including every source and finding out too late.
+  const budget = 4700 - header.length - footer.length;
+  let sourceList = "";
+  let includedCount = 0;
+  for (const f of dossier.facts) {
+    const line = `• ${f.claim}\n  ${f.sourceUrl}\n`;
+    if (sourceList.length + line.length > budget) break;
+    sourceList += line;
+    includedCount++;
+  }
+  const omitted = dossier.facts.length - includedCount;
+  if (omitted > 0) sourceList += `(+${omitted} more source${omitted === 1 ? "" : "s"})`;
+
+  const description = `${header}${sourceList.trimEnd()}${footer}`;
 
   // The free LLM frequently ignores the segment-count instruction above and
   // writes way more than asked — two production runs in a row got rejected
