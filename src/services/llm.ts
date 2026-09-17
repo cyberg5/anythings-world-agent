@@ -100,6 +100,33 @@ export async function askForJson<T>(systemPrompt: string, userPrompt: string): P
 }
 
 async function callOpenRouter<T>(models: string[], systemPrompt: string, userPrompt: string): Promise<T> {
+  try {
+    return await requestOpenRouter<T>(models, systemPrompt, userPrompt, true);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // Our model-catalog filter (getFreeModels) checks `supported_parameters`
+    // for response_format support, but that field is sometimes wrong for a
+    // specific free-tier ROUTE (seen: a model listed as supporting it still
+    // failed via the "Google AI Studio" backend specifically with "JSON mode
+    // is not enabled for this model"). Rather than crash, retry the exact
+    // same request without asking for response_format at all — the prompt
+    // instruction + extractJsonObject() fallback below still get us valid
+    // JSON most of the time, and this is far cheaper than burning a whole
+    // orchestrator attempt (and a chunk of the 50-request/day free quota)
+    // over a provider-side inconsistency we can't fix from our end.
+    if (/JSON mode is not enabled/i.test(message)) {
+      return await requestOpenRouter<T>(models, systemPrompt, userPrompt, false);
+    }
+    throw err;
+  }
+}
+
+async function requestOpenRouter<T>(
+  models: string[],
+  systemPrompt: string,
+  userPrompt: string,
+  useResponseFormat: boolean
+): Promise<T> {
   const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -110,7 +137,7 @@ async function callOpenRouter<T>(models: string[], systemPrompt: string, userPro
     },
     body: JSON.stringify({
       models, // OpenRouter tries these in order on error/rate-limit/unavailability
-      response_format: { type: "json_object" },
+      ...(useResponseFormat ? { response_format: { type: "json_object" } } : {}),
       messages: [
         {
           role: "system",
