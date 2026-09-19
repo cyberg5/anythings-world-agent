@@ -91,7 +91,9 @@ export async function askForJson<T>(systemPrompt: string, userPrompt: string): P
     } catch (err) {
       lastError = err;
       const message = err instanceof Error ? err.message : String(err);
-      const isTransient = /Gateway Timeout|50[234]|ECONNRESET|ETIMEDOUT/i.test(message);
+            const isTransient = /Gateway Timeout|50[234]|ECONNRESET|ETIMEDOUT|Premature close|ERR_STREAM_PREMATURE_CLOSE/i.test(
+        message
+      );
       if (!isTransient || attempt === maxAttempts) throw err;
       await new Promise((r) => setTimeout(r, 2000 * attempt));
     }
