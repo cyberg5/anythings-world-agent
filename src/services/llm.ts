@@ -179,8 +179,16 @@ async function requestOpenRouter<T>(
     }
   }
 
-  if (!("result" in parsed)) {
-    throw new Error(`LLM response missing "result" key. Raw output:\n${text}`);
+  // Free models frequently IGNORE the "wrap it in {result: ...}" instruction and
+  // return the payload directly at the top level (seen repeatedly in production:
+  // a complete, valid script object, and a valid QA verdict {"ok":...,"issues":...},
+  // both returned with no "result" key — each used to abort a whole orchestrator
+  // attempt over nothing). Unwrap "result" when it's actually there; otherwise the
+  // parsed value already IS the answer, so use it as-is rather than discarding a
+  // perfectly good response. `response_format: json_object` guarantees an object
+  // at the top level, but a model may also hand back a bare array — that's fine too.
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && "result" in parsed) {
+    return parsed.result as T;
   }
-  return parsed.result as T;
+  return parsed as T;
 }
