@@ -91,15 +91,9 @@ export async function buildSegmentClip(opts: {
     `box=1:boxcolor=0x000000AA:boxborderw=20:x=(w-text_w)/2:y=h-380:line_spacing=8:expansion=none`;
 
   if (mediaType === "video") {
-    // Loop the clip indefinitely; `durationSeconds` here MUST be the real,
-    // already-measured narration length (see productionAgent.ts), not the
-    // script's estimate. A real production bug: relying only on `-shortest`
-    // to detect when the audio stream ends let ffmpeg occasionally miss that
-    // boundary against a looped video input and keep going for a wildly
-    // long, arbitrary time (seen: 1155s and 5974s outputs from a ~2-minute
-    // narration) — `-shortest` depends on ffmpeg noticing EOF at the right
-    // moment, which is a runtime heuristic; `-t` is an explicit, deterministic
-    // hard cutoff that doesn't depend on that detection working correctly.
+    // Loop the clip indefinitely and let -shortest cut it to the real
+    // narration length (which we don't know precisely ahead of TTS running) —
+    // far more robust than trusting the script's approxSeconds estimate.
     const filterComplex =
       `[0:v]scale=${BRAND.width}:${BRAND.height}:force_original_aspect_ratio=increase,` +
       `crop=${BRAND.width}:${BRAND.height},setsar=1,${captionFilter}[v]`;
@@ -116,8 +110,7 @@ export async function buildSegmentClip(opts: {
       "-c:a", "aac",
       "-ar", "44100", // must match every other audio-producing step (intro card, other segments) —
       "-ac", "2",     // a sample-rate/channel mismatch at concat time is what caused the choppy/glitchy audio
-      "-t", durationSeconds.toFixed(3), // authoritative cutoff — see comment above
-      "-shortest", // secondary safety net, kept in case audio is somehow shorter than durationSeconds
+      "-shortest",
       "-pix_fmt", "yuv420p",
       outPath,
     ]);
@@ -139,7 +132,6 @@ export async function buildSegmentClip(opts: {
       "-c:a", "aac",
       "-ar", "44100",
       "-ac", "2",
-      "-t", durationSeconds.toFixed(3), // same explicit hard cutoff as the video branch, for the same reason
       "-shortest",
       "-pix_fmt", "yuv420p",
       outPath,
@@ -221,11 +213,13 @@ export async function applyBrandingPass(opts: {
   const combined = path.join(workDir, "combined.mp4");
   const listFile = path.join(workDir, "brand_concat.txt");
   // Re-encode intro to match main video's audio presence by adding silent audio track.
+  // anullsrc is an INFINITE source; `-t 2` + `-shortest` both pin this to the
+  // intro card's real 2s length so the silent track can't drag the file longer.
   const introWithAudio = path.join(workDir, "intro_with_audio.mp4");
   await run("ffmpeg", [
     "-y", "-i", introPath,
     "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-    "-shortest", "-c:v", "copy", "-c:a", "aac",
+    "-t", "2", "-shortest", "-c:v", "copy", "-c:a", "aac",
     introWithAudio,
   ]);
   await fs.writeFile(listFile, [introWithAudio, inputPath].map((p) => `file '${p}'`).join("\n"));
@@ -238,6 +232,12 @@ export async function applyBrandingPass(opts: {
   ]);
 
   // 3. Watermark logo, small, bottom-right corner, for the whole video.
+  // `-shortest` bounds the output to the main video's own length: the logo is
+  // a single still frame that overlay repeats via eof_action, and without an
+  // explicit bound the muxer can let the output run past the real audio/video
+  // end and inflate the final duration (seen: a ~50s gap appearing only in this
+  // pass). The overlaid video and the copied audio are both `combined`'s
+  // length, so `-shortest` never truncates real content — it only caps runaway.
   await run("ffmpeg", [
     "-y",
     "-i", combined,
@@ -245,6 +245,7 @@ export async function applyBrandingPass(opts: {
     "-filter_complex",
     `[1:v]scale=140:-1,format=rgba,colorchannelmixer=aa=0.85[wm];[0:v][wm]overlay=W-w-40:H-h-260`,
     "-c:a", "copy",
+    "-shortest",
     outPath,
   ]);
 
