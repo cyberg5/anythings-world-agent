@@ -1,7 +1,12 @@
 name: AnyThings World - daily video
 
 on:
-    workflow_dispatch: {} # lets you also trigger a run manually from the Actions tab
+  schedule:
+    # 06:00 UTC daily — edit to taste. This is the entire "automation" —
+    # once this file is on GitHub with the secrets below set, nothing
+    # further is required from you.
+    - cron: "0 6 * * *"
+  workflow_dispatch: {} # lets you also trigger a run manually from the Actions tab
 
 jobs:
   produce-and-publish:
@@ -42,8 +47,10 @@ jobs:
           CHANNEL_HANDLE: "@Any-Future7"
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
           TTS_VOICE: ${{ secrets.TTS_VOICE }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
