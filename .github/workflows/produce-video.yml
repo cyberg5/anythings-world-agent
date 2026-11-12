@@ -1,0 +1,76 @@
+name: Produce & publish (shared)
+
+# Reusable job called by daily-run.yml (YouTube), tiktok-run.yml and
+# instagram-run.yml. One place for the build steps, so a fix to ffmpeg/Piper
+# setup applies to every platform at once. Each caller is its own workflow
+# run, so one platform failing never turns another one red.
+on:
+  workflow_call:
+    inputs:
+      platform:
+        required: true
+        type: string
+      long_form_every_n:
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  produce-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu
+
+      - name: Install Piper TTS (local, free, offline — no API key)
+        run: |
+          pip install --user piper-tts --break-system-packages
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Download Piper voice model
+        # Must match TTS_VOICE (default en_US-lessac-medium) and the
+        # PIPER_DATA_DIR path in src/services/tts.ts. Newer piper-tts no
+        # longer auto-downloads on first use, so this step is required —
+        # skipping it fails with "Unable to find voice".
+        run: |
+          python3 -m piper.download_voices en_US-lessac-medium \
+            --download-dir "$HOME/.local/share/piper-voices"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Run pipeline (${{ inputs.platform }})
+        env:
+          TARGET_PLATFORM: ${{ inputs.platform }}
+          CHANNEL_NAME: "AnyThings World™"
+          CHANNEL_HANDLE: "@Any-Future7"
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          SERPER_API_KEY: ${{ secrets.SERPER_API_KEY }}
+          TTS_VOICE: ${{ secrets.TTS_VOICE }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # Only the target platform's keys are required (see config.ts).
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          TIKTOK_CLIENT_KEY: ${{ secrets.TIKTOK_CLIENT_KEY }}
+          TIKTOK_CLIENT_SECRET: ${{ secrets.TIKTOK_CLIENT_SECRET }}
+          TIKTOK_REFRESH_TOKEN: ${{ secrets.TIKTOK_REFRESH_TOKEN }}
+          TIKTOK_POST_MODE: ${{ vars.TIKTOK_POST_MODE }}
+          TIKTOK_USERNAME: ${{ vars.TIKTOK_USERNAME }}
+          INSTAGRAM_ACCESS_TOKEN: ${{ secrets.INSTAGRAM_ACCESS_TOKEN }}
+          VIDEOS_PER_RUN: "1"
+          LONG_FORM_EVERY_N: ${{ inputs.long_form_every_n }}
+        run: npm run run:once

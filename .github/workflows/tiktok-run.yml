@@ -1,0 +1,21 @@
+name: AnyThings World - daily video (TikTok)
+
+on:
+  schedule:
+    # 09:00 UTC daily — offset from YouTube so runs don't overlap.
+    # Leave this file in place but delete the schedule lines if you want
+    # TikTok to run only when triggered from the CYE app.
+    - cron: "0 9 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  tiktok:
+    # Scheduled runs are skipped until you create the repo VARIABLE TIKTOK_ENABLED=true
+    # (Settings -> Secrets and variables -> Actions -> Variables), so this
+    # doesn't fail daily before its keys exist. Manual/app triggers always run.
+    if: github.event_name == 'workflow_dispatch' || vars.TIKTOK_ENABLED == 'true'
+    uses: ./.github/workflows/produce-video.yml
+    with:
+      platform: tiktok
+      long_form_every_n: "0" # always vertical short-form
+    secrets: inherit
