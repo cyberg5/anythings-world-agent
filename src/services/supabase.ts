@@ -4,10 +4,16 @@ import type { PerformanceSnapshot, UploadResult, VideoScript } from "../types.js
 
 export const db = createClient(config.supabaseUrl, config.supabaseServiceKey);
 
+// Every query below is scoped to config.platform: the same topic may run on
+// YouTube AND TikTok AND Instagram, and each platform keeps its own
+// short/long counter and its own performance feedback loop.
+// Requires supabase/multi_platform.sql (adds the `platform` column).
+
 export async function isTopicAlreadyUsed(topic: string): Promise<boolean> {
   const { data, error } = await db
     .from("videos")
     .select("id")
+    .eq("platform", config.platform)
     .ilike("topic", topic)
     .limit(1);
   if (error) throw error;
@@ -19,10 +25,12 @@ export async function recordPublishedVideo(
   upload: UploadResult
 ): Promise<void> {
   const { error } = await db.from("videos").insert({
+    platform: upload.platform,
     topic: script.topic,
-    youtube_video_id: upload.youtubeVideoId,
+    // Historical column name — holds the platform's own video/media/post id.
+    youtube_video_id: upload.videoId,
     url: upload.url,
-    description: script.description,
+    description: upload.caption ?? script.description,
     tags: script.tags,
     sources: script.citedSources,
     published_at: new Date().toISOString(),
@@ -32,7 +40,7 @@ export async function recordPublishedVideo(
 
 export async function recordPerformance(snap: PerformanceSnapshot): Promise<void> {
   const { error } = await db.from("performance_snapshots").insert({
-    youtube_video_id: snap.youtubeVideoId,
+    youtube_video_id: snap.videoId,
     views: snap.views,
     avg_view_duration_seconds: snap.avgViewDurationSeconds,
     likes: snap.likes,
@@ -43,7 +51,10 @@ export async function recordPerformance(snap: PerformanceSnapshot): Promise<void
 
 /** Used to decide short vs. long-form for the next video (see orchestrator.ts). */
 export async function getPublishedVideoCount(): Promise<number> {
-  const { count, error } = await db.from("videos").select("id", { count: "exact", head: true });
+  const { count, error } = await db
+    .from("videos")
+    .select("id", { count: "exact", head: true })
+    .eq("platform", config.platform);
   if (error) throw error;
   return count ?? 0;
 }
@@ -53,6 +64,7 @@ export async function getTopPerformingTopics(limit = 10): Promise<string[]> {
   const { data, error } = await db
     .from("videos")
     .select("topic, performance_snapshots(views)")
+    .eq("platform", config.platform)
     .order("published_at", { ascending: false })
     .limit(50);
   if (error) throw error;

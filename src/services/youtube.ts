@@ -45,7 +45,7 @@ export async function uploadShort(
     script.format === "short"
       ? `https://www.youtube.com/shorts/${videoId}`
       : `https://www.youtube.com/watch?v=${videoId}`;
-  return { youtubeVideoId: videoId, url: videoUrl };
+  return { platform: "youtube", videoId, url: videoUrl };
 }
 
 export async function getPerformance(videoId: string): Promise<PerformanceSnapshot> {
@@ -54,7 +54,7 @@ export async function getPerformance(videoId: string): Promise<PerformanceSnapsh
   const res = await youtube.videos.list({ part: ["statistics"], id: [videoId] });
   const stats = res.data.items?.[0]?.statistics;
   return {
-    youtubeVideoId: videoId,
+    videoId,
     views: Number(stats?.viewCount ?? 0),
     likes: Number(stats?.likeCount ?? 0),
     // YouTube Analytics API (separate from Data API) is needed for true

@@ -6,6 +6,7 @@ async function main() {
   const { data, error } = await db
     .from("videos")
     .select("youtube_video_id")
+    .eq("platform", "youtube") // performance snapshots are YouTube-only for now
     .gte("published_at", since);
   if (error) throw error;
 

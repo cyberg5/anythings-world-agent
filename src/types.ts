@@ -1,5 +1,8 @@
 export type VideoFormat = "short" | "long";
 
+/** Where a pipeline run publishes. One run = one platform (see TARGET_PLATFORM in config.ts). */
+export type Platform = "youtube" | "tiktok" | "instagram";
+
 export interface TrendCandidate {
   topic: string;
   angle: string;
@@ -52,12 +55,18 @@ export interface QAResult {
 }
 
 export interface UploadResult {
-  youtubeVideoId: string;
+  platform: Platform;
+  // YouTube video id / Instagram media id / TikTok post id (or publish_id
+  // when TikTok hasn't exposed a public post id yet — e.g. inbox drafts).
+  videoId: string;
   url: string;
+  // Platform-specific caption actually used (TikTok/Instagram). Saved as the
+  // video's description instead of the YouTube-shaped one when present.
+  caption?: string;
 }
 
 export interface PerformanceSnapshot {
-  youtubeVideoId: string;
+  videoId: string;
   views: number;
   avgViewDurationSeconds: number;
   likes: number;

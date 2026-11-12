@@ -45,7 +45,9 @@ async function main() {
   const publishedSoFar = await getPublishedVideoCount();
   const format: VideoFormat =
     config.longFormEveryN > 0 && (publishedSoFar + 1) % config.longFormEveryN === 0 ? "long" : "short";
-  console.log(`Total published so far: ${publishedSoFar}. This run targets: ${format}-form.`);
+  console.log(
+    `Platform: ${config.platform}. Published there so far: ${publishedSoFar}. This run targets: ${format}-form.`
+  );
 
   while (published < config.videosPerRun && attempts < maxAttempts) {
     attempts++;
