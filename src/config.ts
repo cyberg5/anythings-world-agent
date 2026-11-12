@@ -1,4 +1,6 @@
 import "dotenv/config";
+import fs from "fs";
+import path from "path";
 import type { Platform } from "./types.js";
 
 function required(name: string): string {
@@ -26,6 +28,28 @@ function targetPlatform(): Platform {
 
 const platform = targetPlatform();
 
+/**
+ * Per-platform channel profile, written by the CYE app to
+ * data/profile_<platform>.json: { "channelName": "...", "niche": "..." }.
+ * - channelName: name used in the watermark/intro, captions and hashtags.
+ * - niche: the subject area this platform's videos are about (e.g. "space
+ *   and astronomy", "ancient history"). Drives automatic topic picking.
+ * Missing file / empty fields fall back to env vars and built-in defaults.
+ */
+function loadProfile(p: Platform): { channelName: string; niche: string } {
+  try {
+    const file = path.resolve(`data/profile_${p}.json`);
+    if (!fs.existsSync(file)) return { channelName: "", niche: "" };
+    const raw = JSON.parse(fs.readFileSync(file, "utf-8"));
+    const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+    return { channelName: str(raw?.channelName), niche: str(raw?.niche) };
+  } catch {
+    return { channelName: "", niche: "" };
+  }
+}
+
+const profile = loadProfile(platform);
+
 /** Required only when this run targets `p` — e.g. a TikTok run doesn't need YouTube keys. */
 function requiredFor(p: Platform, name: string): string {
   return platform === p ? required(name) : process.env[name]?.trim() || "";
@@ -34,7 +58,9 @@ function requiredFor(p: Platform, name: string): string {
 export const config = {
   platform,
 
-  channelName: process.env.CHANNEL_NAME ?? "AnyThings World™",
+  channelName: profile.channelName || process.env.CHANNEL_NAME?.trim() || "AnyThings World™",
+  // Empty = the built-in default (mysteries / myth-vs-truth / science).
+  niche: profile.niche,
   channelHandle: process.env.CHANNEL_HANDLE ?? "@Any-Future7",
 
   openRouterApiKey: required("OPENROUTER_API_KEY"),

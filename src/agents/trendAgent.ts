@@ -35,6 +35,19 @@ export async function pickNextTopic(format: VideoFormat): Promise<TrendCandidate
         "multiple layers/twists to sustain that, not just a single quick fact."
       : "This one is SHORT-FORM (~60-90 seconds) — pick a topic that pays off fast.";
 
+  const channel = config.channelName;
+  const niche = config.niche;
+  // The operator's per-platform subject (set in the CYE app) REPLACES the
+  // default mysteries/science guidance; empty = keep the default.
+  const nicheRule = niche
+    ? `This channel's subject area is: "${niche}". EVERY topic MUST clearly belong to this
+     subject area — never drift outside it. Within it, prefer surprising, little-known,
+     myth-busting or mystery-style angles, since those retain viewers best.`
+    : `Research on what actually retains viewers in this format points strongly toward:
+     unsolved mysteries and unexplained-but-documented phenomena, myth-vs-truth reveals,
+     and mind-blowing science/space facts — these consistently outperform dry encyclopedic
+     topics. Default toward these unless a clearly stronger real-and-sourceable angle exists.`;
+
   // 1) Operator-chosen topics (from the CYE app) take priority. Use the first
   //    one that hasn't been made yet, and have the LLM craft a strong angle
   //    for that EXACT topic (the topic itself is never changed).
@@ -42,7 +55,7 @@ export async function pickNextTopic(format: VideoFormat): Promise<TrendCandidate
   for (const topic of customTopics) {
     if (await isTopicAlreadyUsed(topic)) continue;
     const crafted = await askForJson<Omit<TrendCandidate, "format">>(
-      `You craft a documentary-style angle for a fact-based channel called "AnyThings World".
+      `You craft a documentary-style angle for a fact-based channel called "${channel}".
        You are given ONE exact topic chosen by the channel operator — do NOT change the topic,
        only design the most gripping, real, sourceable angle/hook for it. ${lengthNote}
        Return ONLY a JSON object: {topic, angle, reasonScore (0-1), sourceChannelContext}.
@@ -54,17 +67,19 @@ export async function pickNextTopic(format: VideoFormat): Promise<TrendCandidate
 
   const [wellKnownWins, generalTrendHits] = await Promise.all([
     getTopPerformingTopics(8),
-    searchWeb("viral educational short video ideas trending this week", 8),
+    searchWeb(
+      niche
+        ? `viral ${niche} short video ideas trending this week`
+        : "viral educational short video ideas trending this week",
+      8
+    ),
   ]);
 
   const candidates = await askForJson<Omit<TrendCandidate, "format">[]>(
     `You generate topic ideas for a documentary-style, fact-based Shorts/videos channel called
-     "AnyThings World". Topics must be about REAL, verifiable, interesting subjects — never
+     "${channel}". Topics must be about REAL, verifiable, interesting subjects — never
      celebrity gossip, never anything requiring speculation presented as fact.
-     Research on what actually retains viewers in this format points strongly toward:
-     unsolved mysteries and unexplained-but-documented phenomena, myth-vs-truth reveals,
-     and mind-blowing science/space facts — these consistently outperform dry encyclopedic
-     topics. Default toward these unless a clearly stronger real-and-sourceable angle exists.
+     ${nicheRule}
      ${lengthNote}
      Return ONLY a JSON array of 3 objects: {topic, angle, reasonScore (0-1), sourceChannelContext}.
      "angle" should name the specific hook/mystery/twist the script will build around.`,

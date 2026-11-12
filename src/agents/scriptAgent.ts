@@ -18,7 +18,7 @@ export async function writeScript(dossier: ResearchDossier): Promise<VideoScript
        do not let this run long.`;
 
   const raw = await askForJson<Omit<VideoScript, "citedSources" | "description" | "format">>(
-    `You write scripts for "${config.channelName}", a documentary-style channel that wins on
+    `You write scripts for "${config.channelName}"${config.niche ? ` (subject area: ${config.niche})` : ""}, a documentary-style channel that wins on
      RETENTION and ENGAGEMENT, not just information — the goal is viewers watching to the end,
      liking, commenting, and subscribing, the way top-performing YouTube channels do.
      Every claim must still be traceable ONLY to the provided facts — never invent claims,
